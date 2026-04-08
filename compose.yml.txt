@@ -1,0 +1,9 @@
+services:
+  termius-api-bridge:
+    image: termius/api-bridge:latest
+    container_name: termius-api-bridge
+    ports:
+      - "8080:8080"
+    volumes:
+      - "./termius-bridge-credentials.json:/home/termius/.termius/termius-bridge-credentials.json"
+    restart: unless-stopped

@@ -1,0 +1,476 @@
+# ============================================================================
+# DEPLOYMENT CONFIGURATIONS FOR MULTIPLE PLATFORMS
+# ============================================================================
+
+# ============================================================================
+# 1. VERCEL DEPLOYMENT (vercel.json)
+# ============================================================================
+
+{
+  "version": 2,
+  "name": "salmonos-api",
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "server.js"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
+}
+
+# ============================================================================
+# 2. RENDER DEPLOYMENT (render.yaml)
+# ============================================================================
+
+services:
+  # Main API Service
+  - type: web
+    name: salmonos-api
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: salmonos-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: salmonos-redis
+          type: redis
+          property: connectionString
+      - key: FRED_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://salmonos.com,https://app.salmonos.com
+    
+  # Background Worker (Optional)
+  - type: worker
+    name: salmonos-worker
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install
+    startCommand: node worker.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - fromGroup: salmonos-env
+    
+  # Redis Cache
+  - type: redis
+    name: salmonos-redis
+    region: oregon
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+databases:
+  # PostgreSQL Database
+  - name: salmonos-db
+    region: oregon
+    plan: starter
+    databaseName: salmonos
+    user: salmonos
+
+# ============================================================================
+# 3. RAILWAY DEPLOYMENT (railway.toml)
+# ============================================================================
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+numReplicas = 1
+startCommand = "npm start"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[env]
+NODE_ENV = "production"
+
+# ============================================================================
+# 4. HEROKU DEPLOYMENT (Procfile)
+# ============================================================================
+
+web: npm start
+worker: node worker.js
+
+# ============================================================================
+# 5. DOCKER DEPLOYMENT (Dockerfile)
+# ============================================================================
+
+FROM node:18-alpine
+
+# Install dependencies for better performance
+RUN apk add --no-cache tini
+
+# Create app directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy application code
+COPY . .
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 && \
+    chown -R nodejs:nodejs /app
+
+USER nodejs
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Use tini to handle signals properly
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Start application
+CMD ["node", "server.js"]
+
+# ============================================================================
+# 6. DOCKER COMPOSE (docker-compose.yml)
+# ============================================================================
+
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:password@db:5432/salmonos
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - FRED_API_KEY=${FRED_API_KEY}
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=salmonos
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+# ============================================================================
+# 7. KUBERNETES DEPLOYMENT (k8s-deployment.yaml)
+# ============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: salmonos
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: salmonos-api
+  namespace: salmonos
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: salmonos-api
+  template:
+    metadata:
+      labels:
+        app: salmonos-api
+    spec:
+      containers:
+      - name: api
+        image: salmonos/api:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: salmonos-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: salmonos-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: salmonos-secrets
+              key: jwt-secret
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: salmonos-api-service
+  namespace: salmonos
+spec:
+  selector:
+    app: salmonos-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+  type: LoadBalancer
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: salmonos-api-hpa
+  namespace: salmonos
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: salmonos-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+# ============================================================================
+# 8. AWS LAMBDA (serverless.yml)
+# ============================================================================
+
+service: salmonos-api
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  stage: ${opt:stage, 'prod'}
+  environment:
+    NODE_ENV: production
+    JWT_SECRET: ${env:JWT_SECRET}
+    FRED_API_KEY: ${env:FRED_API_KEY}
+    DATABASE_URL: ${env:DATABASE_URL}
+    REDIS_URL: ${env:REDIS_URL}
+  
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: "*"
+
+functions:
+  api:
+    handler: lambda.handler
+    events:
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+    timeout: 30
+    memorySize: 512
+    
+  healthCheck:
+    handler: lambda.health
+    events:
+      - http:
+          path: /health
+          method: GET
+    timeout: 10
+    memorySize: 256
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-typescript
+
+# ============================================================================
+# 9. AZURE DEPLOYMENT (azure-pipelines.yml)
+# ============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - staging
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: salmonos-variables
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildAndTest
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '18.x'
+            displayName: 'Install Node.js'
+          
+          - script: |
+              npm ci
+              npm run test
+              npm run lint
+            displayName: 'Install dependencies and run tests'
+          
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+            displayName: 'Archive files'
+          
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: '$(Build.ArtifactStagingDirectory)'
+              artifactName: 'drop'
+            displayName: 'Publish artifact'
+
+  - stage: Deploy
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: DeployToProduction
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebApp@1
+                  inputs:
+                    azureSubscription: 'SalmonOS-Subscription'
+                    appType: 'webAppLinux'
+                    appName: 'salmonos-api'
+                    package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+                    runtimeStack: 'NODE|18-lts'
+                  displayName: 'Deploy to Azure App Service'
+
+# ============================================================================
+# 10. CLOUDFLARE WORKERS (wrangler.toml)
+# ============================================================================
+
+name = "salmonos-api"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[env.production]
+route = "api.salmonos.com/*"
+vars = { NODE_ENV = "production" }
+
+[env.production.secrets]
+JWT_SECRET = "your-secret"
+FRED_API_KEY = "your-key"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "your-kv-namespace-id"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "salmonos"
+database_id = "your-database-id"
