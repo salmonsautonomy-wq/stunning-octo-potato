@@ -1,0 +1,17 @@
+# 1. Create clean folders
+mkdir -p docs deployment governance access archive
+
+# 2. Move the files intelligently
+mv *.pdf docs/ 2>/dev/null || true
+mv *White* *Aether* docs/ 2>/dev/null || true
+mv *DEPLOYMENT* *compose* deployment/ 2>/dev/null || true
+mv *entity_access* access/ 2>/dev/null || true
+mv BUSINESS_FRAMEWORK.md.pdf docs/ 2>/dev/null || true
+mv COMPLETE_AI_INTEGRATION_DOCUMENTATION.md docs/ 2>/dev/null || true
+mv DALG_Conversation_Audit.md.pdf docs/ 2>/dev/null || true
+
+# 3. Rename compose
+mv deployment/compose.yml.txt deployment/docker-compose.yml 2>/dev/null || true
+
+# 4. Archive the meme/duplicate chaos
+mv docs/___.lol.pdf docs/___*.pdf archive/ 2>/dev/null || true
