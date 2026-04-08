@@ -32,3 +32,13 @@ Early vault stage — documentation + configs only. Code and live implementation
 ---
 
 **License**: BSD-3-Clause © 2026 salmonsautonomy-wq
+### Repository Structure
+
+- **`/docs/`** — Core documentation, white papers, AI integration guides, and business frameworks (Aether Governance, SalmonOS specs, etc.)
+- **`/deployment/`** — Docker Compose files, deployment configs, and infrastructure docs
+- **`/governance/`** — Aether-specific governance rules and decision frameworks (coming soon)
+- **`/access/`** — Entity access controls, CSVs, and permission models
+- **`/archive/`** — Raw/chaotic uploads and meme files (for historical flavor)
+- Root — README.md, LICENSE, and high-level entry points
+
+This turns the raw "This is Me. I AM" vault into a clean, navigable sovereign blueprint.
